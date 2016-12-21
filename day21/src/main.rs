@@ -106,7 +106,7 @@ fn unscramble(plaintext: &str, file: &str) -> String {
     let positions = (0..plaintext.len()).into_iter()
         .map(|i| (i + i + if i >=4 { 2 } else { 1 }) % plaintext.len());
     for (i, pos) in positions.enumerate() {
-        println!("({}, {})", i, pos);
+//        println!("({}, {})", i, pos);
         rotate_inverse_lookup.insert(pos, i);
     }
 
