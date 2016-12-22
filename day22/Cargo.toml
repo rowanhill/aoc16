@@ -1,0 +1,8 @@
+[package]
+name = "day22"
+version = "0.1.0"
+authors = ["Rowan Hill <rowan.hill@softwire.com>"]
+
+[dependencies]
+regex = "^0.1"
+itertools = "0.5.4"
