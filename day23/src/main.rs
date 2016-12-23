@@ -32,28 +32,15 @@ impl<'a> Instruction<'a> {
                 Inc{reg: reg}
             },
             JumpValNotZero{value, delta} => {
-                // string_to_static_str converts delta.to_string() into a &'static str, but
-                // leaks the String memory! Probably CopyVal should take a String instead of
-                // &str, but this is quicker for now...
-                CopyVal{value: value, target: string_to_static_str(delta.to_string())}
+                CopyVal{value: value, target: delta}
             },
             JumpRegNotZero{check, delta} => {
-                CopyReg{source: check, target: string_to_static_str(delta.to_string())}
+                CopyReg{source: check, target: delta}
             },
             Toggle{reg} => {
                 Inc { reg: reg }
             }
         }
-    }
-}
-
-use std::mem;
-
-fn string_to_static_str(s: String) -> &'static str {
-    unsafe {
-        let ret = mem::transmute(&s as &str);
-        mem::forget(s);
-        ret
     }
 }
 
@@ -104,7 +91,7 @@ fn main() {
     }
 
     let mut regs = HashMap::new();
-    regs.insert("a", 7i32); // 7 for part 1, 12 for pqrt 2
+    regs.insert("a", 12i32); // 7 for part 1, 12 for pqrt 2
     regs.insert("b", 0);
     regs.insert("c", 0);
     regs.insert("d", 0);
