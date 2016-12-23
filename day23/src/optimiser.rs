@@ -8,6 +8,16 @@ trait Optimisation {
     fn optimise(&self, window: &[Instruction]) -> Option<Instruction>;
 }
 
+// Multiply and Add current only match instructions in the window if the order is as expected. In
+// fact, some instructions can be re-ordered without any semantic difference, so those orderings
+// should also be recognised as optimisable.
+// In practice, the current implementation is fine for the AoC puzzle input, but a more general
+// solution would be fun.
+//
+// One possible option is to do some data flow analysis, and look for patterns in the data flow
+// graph, rather than the original instruction list. See data-flow.txt for some thoughts in that
+// direction.
+
 struct Multiply {}
 impl Optimisation for Multiply {
     const LENGTH: usize = 6;
