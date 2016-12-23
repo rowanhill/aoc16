@@ -1,105 +1,20 @@
 #![feature(advanced_slice_patterns, slice_patterns)]
+#![feature(associated_consts)]
 
 extern crate regex;
-use regex::Regex;
 
 #[macro_use]
 extern crate lazy_static;
 
-use Operand::*;
-use Instruction::*;
+mod parser;
+mod optimiser;
 
-lazy_static! {
-    static ref CPY_RE:Regex = Regex::new(r"cpy (.+?) (.+)").unwrap();
-    static ref INC_RE:Regex = Regex::new(r"inc (.+?)").unwrap();
-    static ref DEC_RE:Regex = Regex::new(r"dec (.+?)").unwrap();
-    static ref JNZ_RE:Regex = Regex::new(r"jnz (.+?) (.+)").unwrap();
-    static ref TGL_RE:Regex = Regex::new(r"tgl (.+?)").unwrap();
-}
+use ::parser::Instruction;
+use ::parser::Instruction::*;
+use ::parser::Operand;
+use ::parser::Operand::*;
 
-#[derive(Debug, Clone, Copy)]
-enum Operand {
-    Register(usize),
-    Literal(i32)
-}
-
-impl Operand {
-    fn parse(str: &str) -> Operand {
-        match str {
-            "a" => Register(0),
-            "b" => Register(1),
-            "c" => Register(2),
-            "d" => Register(3),
-            _   => {
-                if let Ok(val) = str.parse::<i32>() {
-                    Literal(val)
-                } else {
-                    unreachable!("Unexpected operand: {}", str);
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Instruction {
-    Copy{source:Operand, target:Operand},
-    Inc{reg:Operand},
-    Dec{reg:Operand},
-    JumpNotZero{check:Operand, delta:Operand},
-    Toggle{reg:Operand},
-    MultiplyAddAndClear{factor_1:Operand, factor_2:Operand, target:Operand, clear:Operand},
-    AddAndClear{source:Operand, target:Operand, clear:Operand},
-    Nop
-}
-
-impl Instruction {
-    fn parse(line: &str) -> Instruction {
-        if let Some(caps) = CPY_RE.captures(line) {
-            let val_or_reg = Operand::parse(caps.at(1).unwrap());
-            let target_reg = Operand::parse(caps.at(2).unwrap());
-            Copy{source: val_or_reg, target: target_reg}
-        } else if let Some(caps) = INC_RE.captures(line) {
-            let reg = Operand::parse(caps.at(1).unwrap());
-            Inc{reg: reg}
-        } else if let Some(caps) = DEC_RE.captures(line) {
-            let reg = Operand::parse(caps.at(1).unwrap());
-            Dec{reg: reg}
-        } else if let Some(caps) = JNZ_RE.captures(line) {
-            let val_or_reg = Operand::parse(caps.at(1).unwrap());
-            let delta = Operand::parse(caps.at(2).unwrap());
-            JumpNotZero{check: val_or_reg, delta: delta}
-        } else if let Some(caps) = TGL_RE.captures(line) {
-            let reg = Operand::parse(caps.at(1).unwrap());
-            Toggle{reg: reg}
-        } else {
-            unreachable!("Did not recognise instruction: {}", line);
-        }
-    }
-
-    fn toggle(&self) -> Instruction {
-        match *self {
-            Copy{source, target} => {
-                JumpNotZero{check: source, delta: target}
-            },
-            Inc{reg} => {
-                Dec{reg: reg}
-            },
-            Dec{reg} => {
-                Inc{reg: reg}
-            },
-            JumpNotZero{check, delta} => {
-                Copy{source: check, target: delta}
-            },
-            Toggle{reg} => {
-                Inc { reg: reg }
-            },
-            MultiplyAddAndClear{..} | AddAndClear{..} | Nop => {
-                unreachable!("Trying to toggle an optimised instruction")
-            }
-        }
-    }
-}
+use optimiser::optimise;
 
 struct Cpu {
     regs: [i32; 4]
@@ -214,113 +129,6 @@ impl Cpu {
 
 fn parse(file: &str) -> Vec<Instruction> {
     file.lines().map(|line| Instruction::parse(line)).collect()
-}
-
-fn optimise(instructions: &[Instruction]) -> Vec<Instruction> {
-    let mut optimised = vec![];
-
-    let mut windows = instructions.windows(6);
-    while let Some(window) = windows.next() {
-//        println!("Considering {:?}", window);
-        if let &[
-            Copy{source, target: Register(add_drain_cpy)},           // src -> drain
-            Inc{reg: out},                                                   // drain -> out, 0 -> drain
-            Dec{reg: Register(add_drain_dec)},                               // ...
-            JumpNotZero{check: Register(add_drain_jmp), delta: Literal(-2)}, // ...
-            Dec{reg: Register(multiply_drain_dec)},                               // repeat above mult_drain times, 0 -> mult_drain
-            JumpNotZero{check: Register(multiply_drain_jmp), delta: Literal(-5)}, // ...
-        ] = window {
-            if add_drain_cpy == add_drain_dec && add_drain_dec == add_drain_jmp &&
-                multiply_drain_dec == multiply_drain_jmp {
-                let mult = MultiplyAddAndClear {
-                    factor_1: source,
-                    factor_2: Register(multiply_drain_dec),
-                    target: out,
-                    clear: Register(add_drain_cpy)
-                };
-                optimised.push(mult);
-                optimised.push(Nop);
-                optimised.push(Nop);
-                optimised.push(Nop);
-                optimised.push(Nop);
-                optimised.push(Nop);
-
-                // This instruction replaced six, so we need to ignore the next 6 windows to start
-                // considering a fresh window.
-                for _ in 0..5 {
-                    windows.next();
-                }
-                continue;
-            }
-        } else if let &[
-            Copy{source, target: Register(drain_cpy)},                   // src -> drain
-            Dec{reg: Register(drain_dec)},                               // ...
-            Inc{reg: out},                                               // drain -> out, 0 -> drain
-            JumpNotZero{check: Register(drain_jmp), delta: Literal(-2)}, // ...
-            _,
-            _
-        ] = window {
-            if drain_cpy == drain_dec && drain_dec == drain_jmp {
-                let add = AddAndClear{
-                    source: source,
-                    target: out,
-                    clear: Register(drain_dec)
-                };
-                optimised.push(add);
-                optimised.push(Nop);
-                optimised.push(Nop);
-                optimised.push(Nop);
-
-                // This instruction replaced four, so we need to ignore the next 3 windows to start
-                // considering a fresh window.
-                for _ in 0..3 {
-                    windows.next();
-                }
-                continue;
-            }
-        }
-
-        optimised.push(window[0]);
-    }
-
-    let mut windows = instructions[optimised.len()..].windows(4);
-    while let Some(window) = windows.next() {
-//        println!("Considering {:?}", window);
-        if let &[
-            Copy{source, target: Register(drain_cpy)},                   // src -> drain
-            Dec{reg: Register(drain_dec)},                               // ...
-            Inc{reg: out},                                               // drain -> out, 0 -> drain
-            JumpNotZero{check: Register(drain_jmp), delta: Literal(-2)}, // ...
-        ] = window {
-            if drain_cpy == drain_dec && drain_dec == drain_jmp {
-                let add = AddAndClear{
-                    source: source,
-                    target: out,
-                    clear: Register(drain_dec)
-                };
-                optimised.push(add);
-                optimised.push(Nop);
-                optimised.push(Nop);
-                optimised.push(Nop);
-
-                // This instruction replaced four, so we need to ignore the next 3 windows to start
-                // considering a fresh window.
-                for _ in 0..3 {
-                    windows.next();
-                }
-                continue;
-            }
-        }
-
-        optimised.push(window[0]);
-    }
-
-    for inst in &instructions[optimised.len()..] {
-//        println!("Considering {:?}", inst);
-        optimised.push(*inst);
-    }
-
-    optimised
 }
 
 fn main() {
