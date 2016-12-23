@@ -1,21 +1,50 @@
 extern crate regex;
 use regex::Regex;
 
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
 use Instruction::*;
 
 #[derive(Debug, Clone, Copy)]
-enum Instruction<'a, 'b> {
+enum Instruction<'a> {
     CopyVal{value:i32, target:&'a str},
-    CopyReg{source:&'a str, target:&'b str},
+    CopyReg{source:&'a str, target:&'a str},
     Inc{reg:&'a str},
     Dec{reg:&'a str},
-    JumpRegNotZero{check:&'a str, delta:&'b str},
-    JumpValNotZero{value: i32, delta:&'b str},
-//    JumpRegNotZeroInvalidDelta{check:&'a str, delta_str:&'b str},
-//    JumpValNotZeroInvalidDelta{value: i32, delta_str:&'b str},
+    JumpRegNotZero{check:&'a str, delta:&'a str},
+    JumpValNotZero{value: i32, delta:&'a str},
     Toggle{reg:&'a str}
+}
+
+impl<'a> Instruction<'a> {
+    fn toggle(&self) -> Instruction<'a> {
+        match *self {
+            CopyVal{value, target} => {
+                JumpValNotZero{value: value, delta: target}
+            },
+            CopyReg{source, target} => {
+                JumpRegNotZero{check: source, delta: target}
+            },
+            Inc{reg} => {
+                Dec{reg: reg}
+            },
+            Dec{reg} => {
+                Inc{reg: reg}
+            },
+            JumpValNotZero{value, delta} => {
+                // string_to_static_str converts delta.to_string() into a &'static str, but
+                // leaks the String memory! Probably CopyVal should take a String instead of
+                // &str, but this is quicker for now...
+                CopyVal{value: value, target: string_to_static_str(delta.to_string())}
+            },
+            JumpRegNotZero{check, delta} => {
+                CopyReg{source: check, target: string_to_static_str(delta.to_string())}
+            },
+            Toggle{reg} => {
+                Inc { reg: reg }
+            }
+        }
+    }
 }
 
 use std::mem;
@@ -75,101 +104,68 @@ fn main() {
     }
 
     let mut regs = HashMap::new();
-    regs.insert("a", 12i32); // 7 for part 1, 12 for pqrt 2
+    regs.insert("a", 7i32); // 7 for part 1, 12 for pqrt 2
     regs.insert("b", 0);
     regs.insert("c", 0);
     regs.insert("d", 0);
 
     let mut instr_idx = 0i32;
     while instr_idx < instructions.len() as i32 {
-
-        let mut toggle_index = None;
-        {
-            let ref instr = instructions[instr_idx as usize];
-            match *instr {
-                CopyVal { value, target } => {
-                    regs.insert(target, value);
-//                    println!("Inserting {} to {}", value, target);
-                },
-                CopyReg { source, target } => {
-                    let value = *regs.get(source).expect(&format!("Unknown register: '{}'", source));
-                    regs.insert(target, value);
-//                    println!("Inserting {} (from {}) to {}", value, source, target);
-                },
-                Inc { reg } => {
-                    let mut val = regs.get_mut(reg).unwrap();
-                    *val += 1;
-//                    println!("Incrementing {} to {}", reg, val);
-                },
-                Dec { reg } => {
-                    let mut val = regs.get_mut(reg).unwrap();
-                    *val -= 1;
-//                    println!("Decrementing {} to {}", reg, val);
-                },
-                JumpValNotZero { value, delta } => {
-                    let delta = if let Ok(d) = delta.parse::<i32>() {
-                        d
-                    } else {
-                        *regs.get(&delta).unwrap()
-                    };
-                    if value != 0 {
-                        instr_idx += delta;
-//                        println!("Jumping by {} to {}", delta, instr_idx);
-                        continue;
-                    }
-                },
-                JumpRegNotZero { check, delta } => {
-                    let delta = if let Ok(d) = delta.parse::<i32>() {
-                        d
-                    } else {
-                        *regs.get(&delta).unwrap()
-                    };
-                    let value = *regs.get(check).expect(&format!("Unknown register: '{}'", check));
-                    if value != 0 {
-                        instr_idx += delta;
-//                        println!("Jumping by {} to {}", delta, instr_idx);
-                        continue;
-                    }
-                },
-                Toggle { reg } => {
-                    let delta = *regs.get(reg).expect(&format!("Unknown register: '{}'", reg));
-                    let idx = instr_idx + delta;
-                    if idx >= 0 && (idx as usize) < instructions.len() {
-                        toggle_index = Some(idx);
-                    }
-                },
-            }
-        }
-
-        if let Some(idx) = toggle_index {
-            let toggled = match instructions[idx as usize] {
-                CopyVal{value, target} => {
-                    JumpValNotZero{value: value, delta: target}
-                },
-                CopyReg{source, target} => {
-                    JumpRegNotZero{check: source, delta: target}
-                },
-                Inc{reg} => {
-                    Dec{reg: reg}
-                },
-                Dec{reg} => {
-                    Inc{reg: reg}
-                },
-                JumpValNotZero{value, delta} => {
-                    // string_to_static_str converts delta.to_string() into a &'static str, but
-                    // leaks the String memory! Probably CopyVal should take a String instead of
-                    // &str, but this is quicker for now...
-                    CopyVal{value: value, target: string_to_static_str(delta.to_string())}
-                },
-                JumpRegNotZero{check, delta} => {
-                    CopyReg{source: check, target: string_to_static_str(delta.to_string())}
-                },
-                Toggle{reg} => {
-                    Inc { reg: reg }
+        let instr = instructions[instr_idx as usize];
+        match instr {
+            CopyVal { value, target } => {
+                regs.insert(target, value);
+//                println!("Inserting {} to {}", value, target);
+            },
+            CopyReg { source, target } => {
+                let value = *regs.get(source).expect(&format!("Unknown register: '{}'", source));
+                regs.insert(target, value);
+//                println!("Inserting {} (from {}) to {}", value, source, target);
+            },
+            Inc { reg } => {
+                let mut val = regs.get_mut(reg).unwrap();
+                *val += 1;
+//                println!("Incrementing {} to {}", reg, val);
+            },
+            Dec { reg } => {
+                let mut val = regs.get_mut(reg).unwrap();
+                *val -= 1;
+//                println!("Decrementing {} to {}", reg, val);
+            },
+            JumpValNotZero { value, delta } => {
+                let delta = if let Ok(d) = delta.parse::<i32>() {
+                    d
+                } else {
+                    *regs.get(&delta).unwrap()
+                };
+                if value != 0 {
+                    instr_idx += delta;
+//                    println!("Jumping by {} to {}", delta, instr_idx);
+                    continue;
                 }
-            };
+            },
+            JumpRegNotZero { check, delta } => {
+                let delta = if let Ok(d) = delta.parse::<i32>() {
+                    d
+                } else {
+                    *regs.get(&delta).unwrap()
+                };
+                let value = *regs.get(check).expect(&format!("Unknown register: '{}'", check));
+                if value != 0 {
+                    instr_idx += delta;
+//                    println!("Jumping by {} to {}", delta, instr_idx);
+                    continue;
+                }
+            },
+            Toggle { reg } => {
+                let delta = *regs.get(reg).expect(&format!("Unknown register: '{}'", reg));
+                let idx = instr_idx + delta;
+                if idx >= 0 && (idx as usize) < instructions.len() {
+                    let toggled = instructions[idx as usize].toggle();
 
-            instructions[idx as usize] = toggled;
+                    instructions[idx as usize] = toggled;
+                }
+            }
         }
 
         instr_idx += 1;
