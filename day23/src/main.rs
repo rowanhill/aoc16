@@ -1,19 +1,78 @@
 extern crate regex;
 use regex::Regex;
 
+#[macro_use]
+extern crate lazy_static;
+
+use Operand::*;
 use Instruction::*;
 
-#[derive(Debug, Clone, Copy)]
-enum Instruction<'a> {
-    Copy{source:&'a str, target:&'a str},
-    Inc{reg:&'a str},
-    Dec{reg:&'a str},
-    JumpNotZero{check:&'a str, delta:&'a str},
-    Toggle{reg:&'a str}
+lazy_static! {
+    static ref CPY_RE:Regex = Regex::new(r"cpy (.+?) (.+)").unwrap();
+    static ref INC_RE:Regex = Regex::new(r"inc (.+?)").unwrap();
+    static ref DEC_RE:Regex = Regex::new(r"dec (.+?)").unwrap();
+    static ref JNZ_RE:Regex = Regex::new(r"jnz (.+?) (.+)").unwrap();
+    static ref TGL_RE:Regex = Regex::new(r"tgl (.+?)").unwrap();
 }
 
-impl<'a> Instruction<'a> {
-    fn toggle(&self) -> Instruction<'a> {
+#[derive(Debug, Clone, Copy)]
+enum Operand {
+    Register(usize),
+    Literal(i32)
+}
+
+impl Operand {
+    fn parse(str: &str) -> Operand {
+        match str {
+            "a" => Register(0),
+            "b" => Register(1),
+            "c" => Register(2),
+            "d" => Register(3),
+            _   => {
+                if let Ok(val) = str.parse::<i32>() {
+                    Literal(val)
+                } else {
+                    unreachable!("Unexpected operand: {}", str);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Instruction {
+    Copy{source:Operand, target:Operand},
+    Inc{reg:Operand},
+    Dec{reg:Operand},
+    JumpNotZero{check:Operand, delta:Operand},
+    Toggle{reg:Operand}
+}
+
+impl Instruction {
+    fn parse(line: &str) -> Instruction {
+        if let Some(caps) = CPY_RE.captures(line) {
+            let val_or_reg = Operand::parse(caps.at(1).unwrap());
+            let target_reg = Operand::parse(caps.at(2).unwrap());
+            Copy{source: val_or_reg, target: target_reg}
+        } else if let Some(caps) = INC_RE.captures(line) {
+            let reg = Operand::parse(caps.at(1).unwrap());
+            Inc{reg: reg}
+        } else if let Some(caps) = DEC_RE.captures(line) {
+            let reg = Operand::parse(caps.at(1).unwrap());
+            Dec{reg: reg}
+        } else if let Some(caps) = JNZ_RE.captures(line) {
+            let val_or_reg = Operand::parse(caps.at(1).unwrap());
+            let delta = Operand::parse(caps.at(2).unwrap());
+            JumpNotZero{check: val_or_reg, delta: delta}
+        } else if let Some(caps) = TGL_RE.captures(line) {
+            let reg = Operand::parse(caps.at(1).unwrap());
+            Toggle{reg: reg}
+        } else {
+            unreachable!("Did not recognise instruction: {}", line);
+        }
+    }
+
+    fn toggle(&self) -> Instruction {
         match *self {
             Copy{source, target} => {
                 JumpNotZero{check: source, delta: target}
@@ -35,40 +94,7 @@ impl<'a> Instruction<'a> {
 }
 
 fn parse(file: &str) -> Vec<Instruction> {
-    let cpy_re:Regex = Regex::new(r"cpy (.+?) (.+)").unwrap();
-    let inc_re = Regex::new(r"inc (.+?)").unwrap();
-    let dec_re = Regex::new(r"dec (.+?)").unwrap();
-    let jnz_re = Regex::new(r"jnz (.+?) (.+)").unwrap();
-    let tgl_re = Regex::new(r"tgl (.+?)").unwrap();
-
-    let mut instructions = vec![];
-
-    for line in file.lines() {
-        let instr = if let Some(caps) = cpy_re.captures(line) {
-            let val_or_reg = caps.at(1).unwrap();
-            let target_reg = caps.at(2).unwrap();
-            Copy{source: val_or_reg, target: target_reg}
-        } else if let Some(caps) = inc_re.captures(line) {
-            let reg = caps.at(1).unwrap();
-            Inc{reg: reg}
-        } else if let Some(caps) = dec_re.captures(line) {
-            let reg = caps.at(1).unwrap();
-            Dec{reg: reg}
-        } else if let Some(caps) = jnz_re.captures(line) {
-            let val_or_reg = caps.at(1).unwrap();
-            let delta = caps.at(2).unwrap();
-            JumpNotZero{check: val_or_reg, delta: delta}
-        } else if let Some(caps) = tgl_re.captures(line) {
-            let reg = caps.at(1).unwrap();
-            Toggle{reg: reg}
-        } else {
-            unreachable!("Did not recognise instruction: {}", line);
-        };
-
-        instructions.push(instr);
-    }
-
-    instructions
+    file.lines().map(|line| Instruction::parse(line)).collect()
 }
 
 struct Cpu {
@@ -82,26 +108,20 @@ impl Cpu {
         }
     }
 
-    fn reg_idx(reg: &str) -> usize {
-        match reg {
-            "a" => 0,
-            "b" => 1,
-            "c" => 2,
-            "d" => 3,
-            _   => unreachable!("Unexpected register name: {}", reg)
-        }
-    }
-
-    fn value(&self, reg_or_val: &str) -> i32 {
+    fn value(&self, reg_or_val: Operand) -> i32 {
         match reg_or_val {
-            "a" | "b" | "c" | "d" => self.regs[Self::reg_idx(reg_or_val)],
-            _ => reg_or_val.parse::<i32>().unwrap()
+            Register(reg_idx) => self.regs[reg_idx],
+            Literal(value) => value
         }
     }
 
-    fn set_value(&mut self, reg: &str, reg_or_val: &str) {
-        let value = self.value(reg_or_val);
-        self.regs[Self::reg_idx(reg)] = value;
+    fn set_value(&mut self, reg: Operand, reg_or_val: Operand) {
+        if let Register(reg_idx) = reg {
+            let value = self.value(reg_or_val);
+            self.regs[reg_idx] = value;
+        } else {
+            panic!("Trying to set a value to a literal: {:?} = {:?}", reg, reg_or_val);
+        }
     }
 
     fn process(&mut self, mut instructions: Vec<Instruction>) {
@@ -113,10 +133,14 @@ impl Cpu {
                     self.set_value(target, source);
                 },
                 Inc { reg } => {
-                    self.regs[Self::reg_idx(reg)] = self.value(reg) + 1;
+                    if let Register(reg_idx) = reg {
+                        self.regs[reg_idx] += 1;
+                    }
                 },
                 Dec { reg } => {
-                    self.regs[Self::reg_idx(reg)] = self.value(reg) - 1;
+                    if let Register(reg_idx) = reg {
+                        self.regs[reg_idx] -= 1;
+                    }
                 },
                 JumpNotZero { check, delta } => {
                     let value = self.value(check);
