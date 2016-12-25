@@ -1,0 +1,8 @@
+[package]
+name = "day25"
+version = "0.1.0"
+authors = ["Rowan Hill <rowan.hill@softwire.com>"]
+
+[dependencies]
+regex = "^0.1"
+lazy_static = "^0.1"
