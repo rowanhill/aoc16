@@ -16,18 +16,17 @@ use ::parser::Operand::*;
 
 use optimiser::optimise;
 
-struct Cpu {
+struct Cpu<T> {
     regs: [i32; 4],
-    output: [i32; 32],
-    output_counter: usize
+    exec_env: Box<ExecutionEnvironment<T>>
 }
 
-impl Cpu {
-    fn new(a_val: i32) -> Cpu {
+impl<T> Cpu<T> {
+    fn new(a_val: i32, mut exec_env: Box<ExecutionEnvironment<T>>) -> Cpu<T> {
+        exec_env.handle_output(0);
         Cpu {
             regs: [a_val, 0, 0, 0],
-            output: [0; 32],
-            output_counter: 0
+            exec_env: exec_env
         }
     }
 
@@ -47,7 +46,7 @@ impl Cpu {
         }
     }
 
-    fn process(&mut self, mut unoptimised_instructions: Vec<Instruction>) {
+    fn process(&mut self, mut unoptimised_instructions: Vec<Instruction>) -> Option<T> {
         let mut instructions = optimise(&unoptimised_instructions);
 
         let mut instr_idx = 0i32;
@@ -98,11 +97,8 @@ impl Cpu {
                 },
                 Out { operand } => {
 //                    print!("{}", self.value(operand));
-                    self.output[self.output_counter] = self.value(operand);
-                    self.output_counter += 1;
-                    if self.output_counter >= 32 {
-                        break;
-                    }
+                    let val = self.value(operand);
+                    self.exec_env.handle_output(val);
                 },
                 MultiplyAddAndClear{ factor_1, factor_2, target, clear } => {
                     //                    print!("Multiplying {:?} by {:?} and adding to {:?}, then clearing {:?} and {:?}", factor_1, factor_2, target, factor_2, clear);
@@ -135,7 +131,13 @@ impl Cpu {
             //            println!("  {:?}", self.regs);
 
             instr_idx += 1;
+
+            if let Some(reason) = self.exec_env.should_terminate(self.regs, instr_idx as usize) {
+                return Some(reason);
+            }
         }
+
+        None
     }
 }
 
@@ -143,24 +145,69 @@ fn parse(file: &str) -> Vec<Instruction> {
     file.lines().map(|line| Instruction::parse(line)).collect()
 }
 
+trait ExecutionEnvironment<T> {
+    fn handle_output(&mut self, val: i32);
+    fn should_terminate(&mut self, registers: [i32; 4], program_counter: usize) -> Option<T>;
+}
+
+enum ClockSeekingTermType {
+    NotAClock,
+    Clock
+}
+
+struct ClockSeekingExecEnv {
+    prev_out: (Option<i32>, Option<i32>),
+    out_count: usize,
+    warmup_window: usize,
+    trial_window: usize
+}
+
+impl ClockSeekingExecEnv {
+    fn new(warmup_window:usize, trial_window:usize) -> ClockSeekingExecEnv {
+        ClockSeekingExecEnv {
+            prev_out: (None, None),
+            out_count: 0,
+            warmup_window: warmup_window,
+            trial_window: trial_window
+        }
+    }
+}
+
+impl ExecutionEnvironment<ClockSeekingTermType> for ClockSeekingExecEnv {
+    fn handle_output(&mut self, val: i32) {
+        self.prev_out = (self.prev_out.1, Some(val));
+        self.out_count += 1;
+    }
+
+    fn should_terminate(&mut self, _: [i32; 4], _: usize) -> Option<ClockSeekingTermType> {
+        if self.out_count < self.warmup_window {
+            // We're still warming up; don't terminate
+            return None
+        }
+        if self.out_count >= self.warmup_window + self.trial_window {
+            // If we saw enough outputs without an error, it's probably a clock signal
+            return Some(ClockSeekingTermType::Clock)
+        }
+        if let (Some(a), Some(b)) = self.prev_out {
+            if !((a == 0 && b == 1) || (a == 1 && b == 0)) {
+                // Terminate if we're not in an alternating 0 / 1 sequence
+                return Some(ClockSeekingTermType::NotAClock)
+            }
+        }
+
+        // We've not decided either way yet, so don't terminate
+        None
+    }
+}
+
 fn main() {
     let instructions = parse(include_str!("input.txt"));
 
-    let mut expected_a = [0i32; 32];
-    let mut expected_b = [0i32; 32];
-    for i in 0..32 {
-        if i % 2 == 0 {
-            expected_a[i] = 1;
-        } else {
-            expected_b[i] = 1;
-        }
-    }
-
     for initial_a in 0.. {
-        let mut cpu = Cpu::new(initial_a);
-        cpu.process(instructions.clone());
-        if cpu.output == expected_a || cpu.output == expected_b {
-            println!("Initial value {} produced clock sequence", initial_a);
+        let exec_env = ClockSeekingExecEnv::new(10, 32); // Skip 1st 10, then examine 32 (& hope that's enough)
+        let mut cpu = Cpu::new(initial_a, Box::new(exec_env));
+        if let Some(ClockSeekingTermType::Clock) = cpu.process(instructions.clone()) {
+            println!("Found somethign that looks like a clock with initial a value: {}", initial_a);
             break;
         }
     }
