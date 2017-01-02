@@ -1,4 +1,4 @@
-2016 Advent of Code solutions by a Rust novice
+# 2016 Advent of Code solutions by a Rust novice
 
 Execution times (taken simply by running `time`) below:
 
