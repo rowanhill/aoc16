@@ -93,7 +93,7 @@ Execution times (taken simply by running `time`) below:
   <tr>
     <td>Day 19</td>
     <td>N/A</td>
-    <td>Many minutes (submitted solution); 141ms (improved solution); 9ms (fastest solution, based on others' answers)</td>
+    <td>Many minutes (submitted solution);<br/>141ms (improved solution);<br/>9ms (fastest solution, based on others' answers)</td>
   </tr>
   <tr>
     <td>Day 20</td>
